@@ -1,0 +1,84 @@
+Import Libraries
+
+```{r}
+library(tidyverse)
+```
+
+Load Data
+
+```{r}
+met_objects <- read_csv("openaccess/MetObjects.csv")
+met_objects
+```
+
+Look at the problems!
+
+```{r}
+problems(met_objects)
+```
+
+Cleaning it up
+
+```{r}
+met_objects$AccessionYear <- as.double(substr(met_objects$AccessionYear, 1, 4))
+```
+
+Time to analyze our columns and see which ones we should try for general predictions
+
+```{r}
+colnames(met_objects)
+```
+
+Variables that seem like they could possibly be useful for predicting `Is Highlight`
+
+1. `Is Timeline Work`
+2. `Is Public Domain`
+3. `Gallery Number`
+4. `Department`
+5. `AccessionYear`
+6. `Culture`
+7. `Period`
+8. `Dynasty`
+9. `Reign`
+10. `Portfolio`
+11. `Artist Nationality`
+12. `Artist Begin Date`
+13. `Artist End Date`
+14. `Artist Gender`
+15. `Object Date`
+16. `Object Begin Date`
+17. `Object End Date`
+18. `Medium`
+19. `Dimensions`
+20. `City`
+21. `State`
+22. `County`
+23. `Country`
+24. `Region`
+25. `Subregion`
+26. `Locale`
+27. `Excavation`
+28. `Classification`
+29. `Rights and Reproduction`
+
+
+Some of these seem useful not as direct variables, but as whether they have *any* value. These include
+
+1. `Portfolio`
+2. `Excavation`
+3. `Rights and Reproduction`
+
+So we'll have to turn these into bools.
+
+```{r}
+met_objects <- met_objects %>%
+  mutate(has_portfolio = !is.na(Portfolio)) %>%
+  mutate(has_excavation = !is.na(Excavation)) %>%
+  mutate(has_rights = !is.na(`Rights and Reproduction`))
+```
+
+```{r}
+met_objects
+```
+
+
