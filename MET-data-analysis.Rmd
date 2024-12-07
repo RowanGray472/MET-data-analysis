@@ -1,10 +1,14 @@
-Import Libraries
+First things first, let's 
+
+Import our libraries-
 
 ```{r}
 library(tidyverse)
+library(splines)
+library(modelr)
 ```
 
-Load Data
+And load our data-
 
 ```{r}
 met_objects <- read_csv("openaccess/MetObjects.csv")
@@ -62,11 +66,12 @@ Variables that seem like they could possibly be useful for predicting `Is Highli
 29. `Rights and Reproduction`
 
 
-Some of these seem useful not as direct variables, but as whether they have *any* value. These include
+
+Some of these seem useful not as direct variables, but as whether they have *any* value. 
+These include
 
 1. `Portfolio`
 2. `Excavation`
-3. `Rights and Reproduction`
 
 So we'll have to turn these into bools.
 
@@ -77,8 +82,144 @@ met_objects <- met_objects %>%
   mutate(has_rights = !is.na(`Rights and Reproduction`))
 ```
 
+Here they all are properly formatted
+
+`Is Timeline Work` + `Is Public Domain` + `Gallery Number` + `Department` + `AccessionYear` + `Culture` + `Period` + `Dynasty` + `Reign` + `has_portfolio` + `Artist Nationality` + `Artist Begin Date` + `Artist End Date` + `Artist Gender` + `Object Date` + `Object Begin Date` + `Object End Date` + `Medium` + `Dimensions` + `City` + `State` + `County` + `Country` + `Region` + `Subregion` + `Locale` + `has_excavation` + `Classification`
+
+Looking at all of the variables we isolated isn't computationally feasible on 10000 rows, never mind 500000 rows. 
+So let's see if we can narrow it down to the most important variables.
+
+The first part of this narrowing is simple—I'm just going to pick some out based on what I think would be interesting and on what might actually have an impact.
+Here's the reduced list-
+
+
+1. `Department`
+2. `AccessionYear`
+3. `Culture`
+4. `Artist End Date`
+5. `Artist Gender`
+6. `Object Date`
+7. `Classification`
+
+I suspect that some of these might be categorical variables with a lot of unique values that we should collapse. 
+Let's test that theory by making some data grids
+
+
 ```{r}
-met_objects
+unique_department <- data_grid(met_objects, Department)
+unique_culture <- data_grid(met_objects, Culture)
+unique_classification <- data_grid(met_objects, Classification)
 ```
 
+Looking the sizes of the data grids using our sidebar, we're going to need to figure out how to collapse unique values in everything except `Department`.
+
+Let's start with culture!
+
+```{r}
+unique_culture
+```
+
+Here's some code that collapses this a bunch- down to about 3,000 unique cultures from 7,300 or so originally.
+
+```{r}
+unique_culture[1, "Culture"] <- "Chugach, Native American" # Fixing the newline character that's in there for some reason.
+unique_culture <- unique_culture %>% 
+  mutate(Culture_Group = str_extract(Culture, "^[^[,;(]]+")) %>%  # First pattern
+  mutate(Culture_Group = ifelse(
+    str_detect(Culture_Group, "^(possibly|probably)"),  # Check for either word at start
+    str_extract(Culture_Group, "(?<=(possibly|probably)\\s)\\w+"),  # Extract word after either
+    Culture_Group  # Keep original if neither
+  )) %>%
+  mutate(Culture_Group = str_to_title(Culture_Group))
+```
+
+Now let's merge this with our original dataframe so that we can filter by top cultures.
+
+```{r}
+met_objects <- met_objects %>%
+  left_join(unique_culture, "Culture") %>%
+  mutate(Culture_Group = as.factor(Culture_Group)) %>%
+  mutate(Culture_Group = fct_lump_min(Culture_Group, min = 1000)) 
+
+met_objects %>%
+  select(Culture_Group) %>%
+  group_by(Culture_Group) %>%
+  count() %>%
+  arrange(desc(n))
+  
+```
+
+Okay now let's do classification
+
+```{r}
+unique_classification
+```
+
+It seems like we could filter a bunch by just taking the first word.
+
+```{r}
+unique_classification <- unique_classification %>% 
+  mutate(Classification_Group = str_extract(Classification, "^[^[-,;(|]]+")) %>%
+  mutate(Classification_Group = str_to_title(Classification_Group))
+```
+
+
+```{r}
+met_objects <- met_objects %>%
+  left_join(unique_classification, "Classification") %>%
+  mutate(Classification_Group = as.factor(Classification_Group)) %>%
+  mutate(Classification_Group = fct_lump_min(Classification_Group, min = 1000)) 
+
+met_objects %>%
+  select(Classification_Group) %>%
+  group_by(Classification_Group) %>%
+  count() %>%
+  arrange(desc(n))
+```
+
+Let's take a look at the date columns— I suspect there's some shenanigans going on there.
+
+```{r}
+met_objects %>%
+  select(AccessionYear)
+```
+
+
+
+Awesome! Now let's try creating the model.
+
+Let's do our analysis on a small subset of the data to save compute power while we're just messing around. 
+
+```{r}
+small_met_objects <- sample_n(met_objects, 100000)
+```
+
+Before we try out any modeling we better split our data up into training and testing.
+
+```{r}
+small_met_training <- sample_n(small_met_objects, nrow(small_met_objects) * 0.8)
+small_met_test <- anti_join(small_met_objects, small_met_training)
+```
+
+Setting up our baseline model...
+
+```{r}
+small_met_training %>%
+  mutate(baseline_prediction = FALSE) %>%
+  summarize(sum(baseline_prediction ==`Is Highlight`)/nrow(small_met_training))
+```
+
+So our model will need to be more than ~99.5% accurate to beat the baseline. 
+```{r}
+small_met_training
+```
+
+```{r}
+first_model <- glm(`Is Highlight` ~ Department + AccessionYear + Culture_Group + `Artist End Date` + `Artist Gender` + `Object Date` + Classification_Group, data = small_met_training, family='binomial')
+```
+
+```{r}
+sorted_coefficients <- sort(abs(coef(first_model)), decreasing = TRUE)
+sorted_coefficients
+```
 
