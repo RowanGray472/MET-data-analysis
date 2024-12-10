@@ -12,13 +12,6 @@ And load our data-
 
 ```{r}
 met_objects <- read_csv("openaccess/MetObjects.csv")
-met_objects
-```
-
-Look at the problems!
-
-```{r}
-problems(met_objects)
 ```
 
 Cleaning it up
@@ -27,71 +20,9 @@ Cleaning it up
 met_objects$AccessionYear <- as.double(substr(met_objects$AccessionYear, 1, 4))
 ```
 
-Time to analyze our columns and see which ones we should try for general predictions
 
-```{r}
-colnames(met_objects)
-```
 
 Variables that seem like they could possibly be useful for predicting `Is Highlight`
-
-1. `Is Timeline Work`
-2. `Is Public Domain`
-3. `Gallery Number`
-4. `Department`
-5. `AccessionYear`
-6. `Culture`
-7. `Period`
-8. `Dynasty`
-9. `Reign`
-10. `Portfolio`
-11. `Artist Nationality`
-12. `Artist Begin Date`
-13. `Artist End Date`
-14. `Artist Gender`
-15. `Object Date`
-16. `Object Begin Date`
-17. `Object End Date`
-18. `Medium`
-19. `Dimensions`
-20. `City`
-21. `State`
-22. `County`
-23. `Country`
-24. `Region`
-25. `Subregion`
-26. `Locale`
-27. `Excavation`
-28. `Classification`
-29. `Rights and Reproduction`
-
-
-
-Some of these seem useful not as direct variables, but as whether they have *any* value. 
-These include
-
-1. `Portfolio`
-2. `Excavation`
-
-So we'll have to turn these into bools.
-
-```{r}
-met_objects <- met_objects %>%
-  mutate(has_portfolio = !is.na(Portfolio)) %>%
-  mutate(has_excavation = !is.na(Excavation)) %>%
-  mutate(has_rights = !is.na(`Rights and Reproduction`))
-```
-
-Here they all are properly formatted
-
-`Is Timeline Work` + `Is Public Domain` + `Gallery Number` + `Department` + `AccessionYear` + `Culture` + `Period` + `Dynasty` + `Reign` + `has_portfolio` + `Artist Nationality` + `Artist Begin Date` + `Artist End Date` + `Artist Gender` + `Object Date` + `Object Begin Date` + `Object End Date` + `Medium` + `Dimensions` + `City` + `State` + `County` + `Country` + `Region` + `Subregion` + `Locale` + `has_excavation` + `Classification`
-
-Looking at all of the variables we isolated isn't computationally feasible on 10000 rows, never mind 500000 rows. 
-So let's see if we can narrow it down to the most important variables.
-
-The first part of this narrowing is simple—I'm just going to pick some out based on what I think would be interesting and on what might actually have an impact.
-Here's the reduced list-
-
 
 1. `Department`
 2. `AccessionYear`
@@ -115,14 +46,10 @@ Looking the sizes of the data grids using our sidebar, we're going to need to fi
 
 Let's start with culture!
 
-```{r}
-unique_culture
-```
-
 Here's some code that collapses this a bunch- down to about 3,000 unique cultures from 7,300 or so originally.
 
 ```{r}
-unique_culture[1, "Culture"] <- "Chugach, Native American" # Fixing the newline character that's in there for some reason.
+unique_culture[1, "Culture"] <- "Chugach, Native American"  # Fixing the newline character that's in there for some reason.
 unique_culture <- unique_culture %>% 
   mutate(Culture_Group = str_extract(Culture, "^[^[,;(]]+")) %>%  # First pattern
   mutate(Culture_Group = ifelse(
@@ -151,10 +78,6 @@ met_objects %>%
 
 Okay now let's do classification
 
-```{r}
-unique_classification
-```
-
 It seems like we could filter a bunch by just taking the first word.
 
 ```{r}
@@ -169,57 +92,171 @@ met_objects <- met_objects %>%
   left_join(unique_classification, "Classification") %>%
   mutate(Classification_Group = as.factor(Classification_Group)) %>%
   mutate(Classification_Group = fct_lump_min(Classification_Group, min = 1000)) 
-
-met_objects %>%
-  select(Classification_Group) %>%
-  group_by(Classification_Group) %>%
-  count() %>%
-  arrange(desc(n))
 ```
 
-Let's take a look at the date columns— I suspect there's some shenanigans going on there.
+Accession Year is really clean- but object date really isn't. Let's clean it up.
+
 
 ```{r}
-met_objects %>%
-  select(AccessionYear)
+met_objects <- met_objects %>%
+  mutate(
+    parsed_year = `Object Date`,
+    parsed_year = if_else(
+      str_detect(parsed_year, "\\d{4}"),
+      str_extract(parsed_year, "\\d{4}"),
+      parsed_year
+    ),
+    parsed_year = if_else(
+      str_detect(parsed_year, "\\d{3}"),
+      str_extract(parsed_year, "\\d{3}"),
+      parsed_year
+    ),
+    parsed_year = if_else(
+      str_detect(parsed_year, "\\d+\\s*(BCE|CE|BC)"),
+      if_else(
+        str_detect(parsed_year, "BCE"),
+        as.character(-as.numeric(str_extract(parsed_year, "\\d+"))),
+        str_extract(parsed_year, "\\d+")
+      ),
+      parsed_year
+    ),
+    parsed_year = if_else(
+      str_detect(parsed_year, "\\d{1,2}(st|nd|rd|th)"),
+      as.character(
+        as.numeric(str_extract(parsed_year, "\\d{1,2}")) * 100
+      ),
+      parsed_year
+    ),
+    parsed_year = as.numeric(parsed_year)
+  )
+
 ```
 
-
-
-Awesome! Now let's try creating the model.
-
-Let's do our analysis on a small subset of the data to save compute power while we're just messing around. 
+Cleaning Gender
 
 ```{r}
-small_met_objects <- sample_n(met_objects, 100000)
+met_objects <- met_objects %>%
+  mutate(parsed_gender = ifelse(is.na(`Artist Gender`), NA, 
+                                ifelse(str_detect(`Artist Gender`, "[Ff]emale"), "Female", "Male")))
 ```
 
-Before we try out any modeling we better split our data up into training and testing.
+Messing with the data types to make glm happy and selecting just the variables we need
 
 ```{r}
-small_met_training <- sample_n(small_met_objects, nrow(small_met_objects) * 0.8)
-small_met_test <- anti_join(small_met_objects, small_met_training)
+met_objects$Culture_Group <- as.character(met_objects$Culture_Group)
+met_objects$Classification_Group <- as.character(met_objects$Classification_Group)
+selected_variables <- met_objects %>%
+  select(`Is Highlight`, Department, AccessionYear, Culture_Group, parsed_gender, parsed_year, Classification_Group) %>%
+  mutate(Department = ifelse(is.na(Department), 'Unknown', Department)) %>%
+  mutate(parsed_gender = ifelse(is.na(parsed_gender), 'Unknown', parsed_gender)) %>%
+  mutate(Culture_Group = ifelse(is.na(Culture_Group), 'Unknown', Culture_Group)) %>%
+  mutate(Classification_Group = ifelse(is.na(Classification_Group), 'Unknown', Classification_Group))
+```
+
+Okay now that we've got our data cleaned it's time to answer our questions.
+
+## Question 1: Which variables have the highest correlation with `isHighlight`?
+
+Let's set our seed and split up our model.
+
+```{r}
+set.seed(123)
+big_met_training <- sample_n(selected_variables, nrow(selected_variables) * 0.8)
+big_met_testing <- anti_join(selected_variables, big_met_training)
 ```
 
 Setting up our baseline model...
 
 ```{r}
-small_met_training %>%
+big_met_testing %>%
   mutate(baseline_prediction = FALSE) %>%
-  summarize(sum(baseline_prediction ==`Is Highlight`)/nrow(small_met_training))
+  summarize(sum(baseline_prediction ==`Is Highlight`)/nrow(big_met_testing))
 ```
 
-So our model will need to be more than ~99.5% accurate to beat the baseline. 
-```{r}
-small_met_training
-```
+Some more data type shenanigans and making the model
 
 ```{r}
-first_model <- glm(`Is Highlight` ~ Department + AccessionYear + Culture_Group + `Artist End Date` + `Artist Gender` + `Object Date` + Classification_Group, data = small_met_training, family='binomial')
+big_met_training$Culture_Group <- as.character(big_met_training$Culture_Group)
+big_met_training$Classification_Group <- as.character(big_met_training$Classification_Group)
+big_met_training$Department <- as.character(big_met_training$Department)
+big_met_training$parsed_gender <- as.character(big_met_training$parsed_gender)
+
+met_model <- glm(`Is Highlight` ~ Department + AccessionYear + Culture_Group + 
+                      parsed_gender + parsed_year + Classification_Group, 
+                      data = big_met_training, family='binomial')
+
+met_model
 ```
 
+Our accuracy rate on the test data
+
 ```{r}
-sorted_coefficients <- sort(abs(coef(first_model)), decreasing = TRUE)
-sorted_coefficients
+big_met_testing %>%
+  add_predictions(met_model, type='response') %>%
+  mutate(predicted_outcome = ifelse(pred>=0.5, TRUE, FALSE)) %>%
+  mutate(is_correct = `Is Highlight` == predicted_outcome) %>%
+  summarize(mean(is_correct, na.rm=TRUE))
+```
+
+So our model is slightly better than the baseline, since 0.9560013 > 0.95562
+
+This might seem small but over the course of our 484956 observations, the delta between those two (0.9560013-0.95562) will contribute to nearly 185 more correct predictions!
+
+```{r}
+(0.9560013-0.95562) * 484956
+```
+
+
+Let's put our coefficients in a dataframe
+
+```{r}
+coefficients <- coef(met_model)
+coef_data <- data.frame(
+  Variable = names(coefficients),
+  Coefficient = coefficients
+)
+coef_data %>%
+  arrange(desc(Coefficient))
+```
+
+Now let's graph them!
+
+```{r}
+
+coef_data %>%
+  mutate(Variable = reorder(Variable, Coefficient)) %>% 
+  ggplot() +
+  geom_bar(aes(y = Variable, x = Coefficient), stat = "identity")
+```
+
+This can also help us answer questions 2 and 3.
+
+Questions 2: If I'm artist and want the Met to think my art is "a popular and important artwork in the collection" what kind of art should I make? What should my demographics be?
+
+The surprising answer is to make sculpture! Stone sculpture in particular is really helpful for getting the Met to think you're cool.
+
+How old you are and when the Met found your art is basically insignificant, and you face a very very minor disadvantage if you're a man.
+
+Most cultures lie somewhere in the middle but you're best off being Japanese, Greek, German or Spanish. I'm pretty skeptical of this though because while Japanese is the highest rated culture, one of the low rated cutures is 'Japan'.
+
+There are quite a few mediums that really hurt your chances—these include Coins, Stucco, Negatives, Albums, Ephemera, Plaquettes, Books, and Jade. 
+
+Somewhat surprisingly you also really don't want to be European—although this seems like an obvious artifact of the Met overprioritizing European art in their collection.
+
+Question 3: What time periods and cultures are the best-represented among the Met's "popular and important artwork".
+
+Time period has basically no impact on whether the art in question is a highlight.
+
+As I mentioned above most cultures don't seem to matter and even the ones that do are suspect.
+
+So if you're an art dealing trying to get the Met to like you I'd focus on stone sculpture.
+
+```{r}
+nat_objects <- read_csv("objects.csv")
+```
+
+
+```{r}
+nat_objects
 ```
 
