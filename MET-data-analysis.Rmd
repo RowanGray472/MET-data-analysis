@@ -1,3 +1,75 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+Rowan Gray
+
+Prof. Cannon
+
+CS36
+
+11 December 2024
+
+# Final Project: Analysis of the MET Collection
+
+## Introduction
+
+
+This project will analyze data from the Metropolitan Museum of Art in New York that describes their collection. 
+This dataset contains a variable called `Is Highlight`, which according to the MET's website, is a boolean variable set to true if an artwork is "a popular and important artwork in the collection". 
+I'm really interested to see what variables predict an artwork's status as a popular and important work and seeing what trends I can find. Here's three specific questions on that theme.
+
+Question 1: Which variables have the highest correlation with `isHighlight`?
+Question 2: If I'm artist and want the MET to think my art is "a popular and important artwork in the collection" what kind of art should I make?
+Question 3: What time periods and cultures are the best-represented among the MET's "popular and important artwork"?
+
+I answer these questions in much more robust detail in the Conclusions section, but here's a topline summary of my results.
+
+1. The variables with the largest and most robust effect on whether an artwork is a highlight have to do with the medium. Specifically, Stone Sculpture and Paintings are the most successful.
+2. Culture seems to have no impact on the highlight worthiness of your art most of the time, but there are some edge cases.
+3. What year you created your work has no impact on whether your art is a highlight, but what year the MET bought your work is extremely robustly associated with highlight status, but at a very low level.
+
+The code for this project is opensourced on Github. [You can find it here.](https://github.com/RowanGray472/MET-data-analysis)
+
+## Data Source
+
+
+The data for this project was sourced from [The Metropolitan Museum of Art Open Access CSV](https://github.com/metmuseum/openaccess). 
+This is a dataset of roughly 470,000 artworks in the MET's collection, on display and in their warehouses. 
+On the MET's repo for this data, they say that it is "generated from our internal database".
+The dataset was published under a Creative Commons Zero license and the MET all copyright and related rights to the dataset.
+The MET has an incentive to have an accurate database of all the art in their collection and to release it to the public, so the dataset is likely as high-quality as the MET's data scientists can make it.
+That said, I don't think the dataset is natively stored in a CSV.
+There were some issues parsing data, especially gender data, that seem related to an imperfect translation to CSV.
+Also most big datasets aren't usually stored in CSV, it's just a convenient format to store your data in if you want to opensource it.
+
+
+## Data Ethics
+
+
+The project has several ethical concerns.
+
+I analyzed the Culture variable in the dataset, but doing this required that I both tidy and flatten the data. 
+As a result, nearly all sub-cultures were removed as independent classifications, and I only kept the top 20 or so largest cultures- all cultures with more than 1000 pieces in the museum.
+This should not be taken to be an accurate and full depiction of the cultural diversity of objects at the MET museum, since all small cultures and most subcultures were removed. 
+For context, the dataset originally had a total of around 7300 cultures, and my analysis flattened it down to 23.
+
+Additionally, the way I parsed the gender variable right now marks everyone who has a gender that isn't explicitly marked Female as Male.
+I looked through the data briefly and couldn't find any cases of this messing up but I'm sure it does sometimes.
+This also posits Male as implicitly the default gender which makes this method of data cleaning problematic, especially going forward, but it seems pretty accurate here because the MET's collection is so Male dominated.
+And of course there's lots of cases where the art was made by more than one person or by a company.
+
+Finally, I'm concerned that this project could be taken as an attempt to figure out what kind of art is the 'most valuable'.
+This would both be an inaccurate reading of what I'm trying to do and of what I think about art in general.
+I'm trying to figure out what the MET thinks is highlight-worthy art and what, if any, variables in their publicly released dataset predict that.
+Art in itself does not have any value—it only exists relative to the people who made it and the people who engage with it.
+
+## Data Import, Cleaning and Tidying, and Exploration
+
+### Data Import
+
+
 First things first, let's 
 
 Import our libraries-
@@ -14,12 +86,7 @@ And load our data-
 met_objects <- read_csv("openaccess/MetObjects.csv")
 ```
 
-Cleaning it up
-
-```{r}
-met_objects$AccessionYear <- as.double(substr(met_objects$AccessionYear, 1, 4))
-```
-
+### Cleaning and Tidying
 
 
 Variables that seem like they could possibly be useful for predicting `Is Highlight`
@@ -49,13 +116,13 @@ Let's start with culture!
 Here's some code that collapses this a bunch- down to about 3,000 unique cultures from 7,300 or so originally.
 
 ```{r}
-unique_culture[1, "Culture"] <- "Chugach, Native American"  # Fixing the newline character that's in there for some reason.
+unique_culture[1, "Culture"] <- "Chugach, Native American"  
 unique_culture <- unique_culture %>% 
-  mutate(Culture_Group = str_extract(Culture, "^[^[,;(]]+")) %>%  # First pattern
+  mutate(Culture_Group = str_extract(Culture, "^[^[,;(]]+")) %>% 
   mutate(Culture_Group = ifelse(
-    str_detect(Culture_Group, "^(possibly|probably)"),  # Check for either word at start
-    str_extract(Culture_Group, "(?<=(possibly|probably)\\s)\\w+"),  # Extract word after either
-    Culture_Group  # Keep original if neither
+    str_detect(Culture_Group, "^(possibly|probably)"),
+    str_extract(Culture_Group, "(?<=(possibly|probably)\\s)\\w+"),
+    Culture_Group
   )) %>%
   mutate(Culture_Group = str_to_title(Culture_Group))
 ```
@@ -73,7 +140,6 @@ met_objects %>%
   group_by(Culture_Group) %>%
   count() %>%
   arrange(desc(n))
-  
 ```
 
 Okay now let's do classification
@@ -86,6 +152,7 @@ unique_classification <- unique_classification %>%
   mutate(Classification_Group = str_to_title(Classification_Group))
 ```
 
+Making it a factor and taking only the top groups.
 
 ```{r}
 met_objects <- met_objects %>%
@@ -94,8 +161,7 @@ met_objects <- met_objects %>%
   mutate(Classification_Group = fct_lump_min(Classification_Group, min = 1000)) 
 ```
 
-Accession Year is really clean- but object date really isn't. Let's clean it up.
-
+Cleaning up object date
 
 ```{r}
 met_objects <- met_objects %>%
@@ -104,26 +170,26 @@ met_objects <- met_objects %>%
     parsed_year = if_else(
       str_detect(parsed_year, "\\d{4}"),
       str_extract(parsed_year, "\\d{4}"),
+      NA_character_
+    ),
+    parsed_year = if_else(
+      is.na(parsed_year) & str_detect(`Object Date`, "\\d{3}"),
+      str_extract(`Object Date`, "\\d{3}"),
       parsed_year
     ),
     parsed_year = if_else(
-      str_detect(parsed_year, "\\d{3}"),
-      str_extract(parsed_year, "\\d{3}"),
-      parsed_year
-    ),
-    parsed_year = if_else(
-      str_detect(parsed_year, "\\d+\\s*(BCE|CE|BC)"),
+      is.na(parsed_year) & str_detect(`Object Date`, "\\d+\\s*(BCE|CE|BC)"),
       if_else(
-        str_detect(parsed_year, "BCE"),
-        as.character(-as.numeric(str_extract(parsed_year, "\\d+"))),
-        str_extract(parsed_year, "\\d+")
+        str_detect(`Object Date`, "BCE|BC"),
+        as.character(-as.numeric(str_extract(`Object Date`, "\\d+"))),
+        str_extract(`Object Date`, "\\d+")
       ),
       parsed_year
     ),
     parsed_year = if_else(
-      str_detect(parsed_year, "\\d{1,2}(st|nd|rd|th)"),
+      is.na(parsed_year) & str_detect(`Object Date`, "\\d{1,2}(st|nd|rd|th)"),
       as.character(
-        as.numeric(str_extract(parsed_year, "\\d{1,2}")) * 100
+        as.numeric(str_extract(`Object Date`, "\\d{1,2}")) * 100 - 50
       ),
       parsed_year
     ),
@@ -132,6 +198,13 @@ met_objects <- met_objects %>%
 
 ```
 
+Cleaning AccessionYear- much less work!
+
+```{r}
+met_objects$AccessionYear <- as.double(substr(met_objects$AccessionYear, 1, 4))
+```
+
+
 Cleaning Gender
 
 ```{r}
@@ -139,6 +212,9 @@ met_objects <- met_objects %>%
   mutate(parsed_gender = ifelse(is.na(`Artist Gender`), NA, 
                                 ifelse(str_detect(`Artist Gender`, "[Ff]emale"), "Female", "Male")))
 ```
+
+### Data Transformation/Visualization/Modeling
+
 
 Messing with the data types to make glm happy and selecting just the variables we need
 
@@ -154,8 +230,6 @@ selected_variables <- met_objects %>%
 ```
 
 Okay now that we've got our data cleaned it's time to answer our questions.
-
-## Question 1: Which variables have the highest correlation with `isHighlight`?
 
 Let's set our seed and split up our model.
 
@@ -184,8 +258,14 @@ big_met_training$parsed_gender <- as.character(big_met_training$parsed_gender)
 met_model <- glm(`Is Highlight` ~ Department + AccessionYear + Culture_Group + 
                       parsed_gender + parsed_year + Classification_Group, 
                       data = big_met_training, family='binomial')
+```
 
-met_model
+We're getting a warning here that some probabilities are numerically zero or 1. That's to be expected—some of these variables might have a near-zero relationship with the thing we're trying to measure.
+
+Here's a summary of our model. Looks like there's quite a few significant variables!
+
+```{r}
+summary(met_model)
 ```
 
 Our accuracy rate on the test data
@@ -210,53 +290,186 @@ This might seem small but over the course of our 484956 observations, the delta 
 Let's put our coefficients in a dataframe
 
 ```{r}
-coefficients <- coef(met_model)
-coef_data <- data.frame(
-  Variable = names(coefficients),
-  Coefficient = coefficients
-)
+model_summary <- summary(met_model)
+coefficients_table <- model_summary$coefficients
+coef_data <- as.data.frame(coefficients_table)
+coef_data$Variable <- rownames(coefficients_table)
 coef_data %>%
-  arrange(desc(Coefficient))
+  arrange(desc(Estimate))
 ```
 
 Now let's graph them!
 
 ```{r}
-
 coef_data %>%
-  mutate(Variable = reorder(Variable, Coefficient)) %>% 
+  mutate(Variable = reorder(Variable, Estimate)) %>% 
   ggplot() +
-  geom_bar(aes(y = Variable, x = Coefficient), stat = "identity")
+  geom_bar(aes(y = Variable, x = Estimate), stat = "identity")
 ```
 
-This can also help us answer questions 2 and 3.
-
-Questions 2: If I'm artist and want the Met to think my art is "a popular and important artwork in the collection" what kind of art should I make? What should my demographics be?
-
-The surprising answer is to make sculpture! Stone sculpture in particular is really helpful for getting the Met to think you're cool.
-
-How old you are and when the Met found your art is basically insignificant, and you face a very very minor disadvantage if you're a man.
-
-Most cultures lie somewhere in the middle but you're best off being Japanese, Greek, German or Spanish. I'm pretty skeptical of this though because while Japanese is the highest rated culture, one of the low rated cutures is 'Japan'.
-
-There are quite a few mediums that really hurt your chances—these include Coins, Stucco, Negatives, Albums, Ephemera, Plaquettes, Books, and Jade. 
-
-Somewhat surprisingly you also really don't want to be European—although this seems like an obvious artifact of the Met overprioritizing European art in their collection.
-
-Question 3: What time periods and cultures are the best-represented among the Met's "popular and important artwork".
-
-Time period has basically no impact on whether the art in question is a highlight.
-
-As I mentioned above most cultures don't seem to matter and even the ones that do are suspect.
-
-So if you're an art dealing trying to get the Met to like you I'd focus on stone sculpture.
+Let's make plots for each of the types of categorical variables so we can see them more clearly.
 
 ```{r}
-nat_objects <- read_csv("objects.csv")
+coef_data %>%
+  filter(str_detect(Variable, "Department")) %>%
+  mutate(Variable = reorder(Variable, Estimate)) %>% 
+  ggplot() +
+  geom_bar(aes(y = Variable, x = Estimate), stat = "identity")
 ```
-
 
 ```{r}
-nat_objects
+coef_data %>%
+  filter(str_detect(Variable, "Classification")) %>%
+  mutate(Variable = reorder(Variable, Estimate)) %>% 
+  ggplot() +
+  geom_bar(aes(y = Variable, x = Estimate), stat = "identity")
 ```
 
+```{r}
+coef_data %>%
+  filter(str_detect(Variable, "Culture")) %>%
+  mutate(Variable = reorder(Variable, Estimate)) %>% 
+  ggplot() +
+  geom_bar(aes(y = Variable, x = Estimate), stat = "identity")
+```
+
+Let's do some more analysis on time period though, because even if there's no linear relationship there could still be a relationship.
+
+```{r}
+big_met_training %>%
+  filter(`Is Highlight` == TRUE) %>%
+  select(parsed_year, `Is Highlight`) %>%
+  group_by(parsed_year) %>%
+  summarize(count = n()) %>%
+  ggplot() + 
+  geom_point(aes(x = parsed_year, y = count))
+```
+
+We get a warning on this and the next few graphs that one row was removed. Don't see any need to worry about that since we have hundreds of thousands of rows.
+
+That looks encouraging, but let's make sure we're not just looking at a trend in the overall number of objects.
+
+```{r}
+big_met_training %>%
+  group_by(parsed_year) %>%
+  summarize(count = n()) %>%
+  ggplot() + 
+  geom_point(aes(x=parsed_year, y=count))
+```
+
+
+These plots look really weird but they're just artifacts of how we've parsed the year data. This is roughly how we should expect it to look—let's check out the distinct values.
+
+```{r}
+big_met_training %>%
+  select(parsed_year) %>%
+  distinct() %>%
+  arrange(desc(parsed_year))
+```
+
+So it seems like there isn't any special relationship with time.
+
+Let's check it out with our AccessionYear too.
+
+```{r}
+big_met_training %>%
+  filter(`Is Highlight` == TRUE) %>%
+  select(AccessionYear, `Is Highlight`) %>%
+  group_by(AccessionYear) %>%
+  summarize(count = n()) %>%
+  ggplot() + 
+  geom_point(aes(x = AccessionYear, y = count))
+```
+
+This looks like a linear relationship but let's check the overall data.
+
+```{r}
+big_met_training %>%
+  group_by(AccessionYear) %>%
+  summarize(count = n()) %>%
+  ggplot() + 
+  geom_point(aes(x=AccessionYear, y=count))
+```
+
+No huge differences here but it's somewhat interesting that all the outliers disappeared.
+
+## Conclusions
+
+### Main Questions
+
+#### Question 1: Which variables have the highest correlation with `isHighlight`?
+
+
+Let's see which of our variables are significant.
+
+```{r}
+coef_data$Significant <- coef_data$`Pr(>|z|)` < 0.05
+significant_vars <- coef_data[coef_data$Significant, ]
+significant_vars %>%
+  arrange(desc(Estimate))
+```
+
+We have 32 significant variables—all of which have z scores above 2.5. We can see that the top five most positively associated variables are all Classification Groups— Stone Sculpture, Paintings, Sculpture, Codices, and Woodwork.
+
+Let's graph them!
+
+```{r}
+significant_vars %>%
+  filter(Estimate>1.35) %>%
+  ggplot() + geom_bar(aes(y=Variable, x=Estimate), stat='identity')
+```
+
+
+#### Question 2: If I'm artist and want the MET to think my art is "a popular and important artwork in the collection" what kind of art should I make?
+
+
+Let's remember- the variables we analyzed were `Department`, `AccessionYear`, `Culture`, `Artist End Date`, `Artist Gender`, `Object Date`, and `Classification`.
+
+Some of these variables are beyond your control—for instance when you're born, what your gender is, and when you make your art.
+Culture might be under your control somewhat if you're a multicultural artist, but for most people you probably can't manipulate that variable either.
+So all we're down to is Classification and Department.
+
+Let's look at the significant variables in those dimensions.
+
+```{r}
+significant_vars %>%
+  filter(str_detect(Variable, "Department|Classification")) %>%
+  arrange(desc(Estimate))
+```
+
+It seems like most of our variables are actually part of these two categories.
+
+Looking at the most positively and negatively associated variables, it seems like you're best off if you make Stone Sculptures or Paintings, but manage to avoid being put in the "Drawing and Prints" or "European Sculpture and Decorative Arts" departments.
+
+#### Question 3: What time periods and cultures are the best-represented among the Met's "popular and important artwork"?
+
+
+Let's check out our significant variables again!
+
+```{r}
+significant_vars %>%
+  filter(str_detect(Variable, "Culture|Year")) %>%
+  arrange(desc(Estimate))
+```
+
+Something weird is going on here—the Japanese culture group is doing great, but the Japan culture group is doing really poorly. 
+You'd expect them to not be significant if this were the case but they both are—in fact they both have Z scores over 4!
+So there must be some quirk in whether the MET labels art as Japanese or Japan that is really indicative of the propensity of that art to be a highlight.
+
+The other best-off culture groups are the Germans, the Greeks, and the French.
+
+Interestingly, while AccessionYear has a low coefficient, it's extremely robust, with P functionally equivalent to zero.
+This is a little surprising because parsed_year is not even a significant variable.
+The difference between the two is that parsed_year describes when the art was made, whereas AccessionYear describes the year the MET acquired the art.
+So you're better off having the MET acquire your art later on, although not much.
+
+### Next Steps
+
+An interesting next step would be to try this sort of analysis on other large art museums and see if the model holds. I looked at a few other museums but none I could find had an equivalent to the `Is Highlight` variable.
+
+Another place you could go is start tracking what the museums put in their gallery's versus what they put in the warehouses and see how that correlates to the sort of variables I looked at—that would get at a similar question but probably in a more universally applicable way.
+
+## Sources
+
+Code: https://github.com/RowanGray472/MET-data-analysis
+Data: https://github.com/metmuseum/openaccess
